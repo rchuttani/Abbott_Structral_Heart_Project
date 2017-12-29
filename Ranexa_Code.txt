@@ -1,0 +1,311 @@
+/////////////////////////////////////////////////////////////RANEXA DRUG///////////////////////////
+
+
+
+
+///////////PHARMACY CODE FOR RANEXA DRUG////////////////
+drop table if exists project_analytics.presales.AC_Claims_RXA_Mitral_NDC_Ranexa;
+CREATE TABLE project_analytics.presales.AC_Claims_RXA_Mitral_NDC_Ranexa AS
+SELECT
+    'Pharmacy' as Data_Source,
+    encrypted_key_1 AS patient_suffix,
+    CONDOR_TDR_CLAIMID AS Claim_Number
+    , to_date(date_of_service) as SERVICE_FROM
+    ,PRODUCT_OR_SERVICE_ID,
+	 prescriber_id as Provider_NPI,
+	 SERVICE_PROVIDER_ID as facility_npi 
+    
+    FROM rwd_db.rwd.condor_pharmacy_record
+
+WHERE TRIM(UPPER(RESPONSE_CODE)) = 'P'
+  AND trim(upper(PRODUCT_OR_SERVICE_ID)) in ('61958100403',
+'61958100202',
+'61958100402',
+'55154442800',
+'67159011403',
+'55154442700',
+'43353088083',
+'67159011203',
+'55154442804',
+'55154442704',
+'68151500401',
+'61958100101',
+'61958100102',
+'61958100303',
+'67159091203',
+'61958100301',
+'61958100201',
+'61958100401',
+'61958100302')
+  and
+  patient_suffix is not null
+        and trim(patient_suffix) <> ''
+        and upper(patient_suffix) not like 'XXX -%'
+        and upper(patient_suffix) <> 'NULL'
+AND Year(SERVICE_FROM) in ('2014','2015','2016')
+
+////////////TOTAL RECORDS FROM THE ABOVE FILE////////////
+Select * from project_analytics.presales.AC_Claims_RXA_Mitral_NDC_Ranexa   ///////// 635,236
+
+
+////////////////////RAVEN CODE FOR RANEXA DRUG///////////////////
+
+drop table if exists project_analytics.presales.AC_NDC_Raven_Mitral_Ranexa ;
+CREATE TABLE project_analytics.presales.AC_NDC_Raven_Mitral_Ranexa as 
+SELECT   
+'Raven' as Data_Source,
+encrypted_key_1 as patient_suffix,
+        claim_number,
+        Coalesce(SERVICE_FROM,STATEMENT_FROM) as Service_Date,
+        NDC
+          
+FROM    rwd_db.sandbox.claims_submits_procedure
+where
+UPPER(NDC) in ( '61958100403',
+'61958100202',
+'61958100402',
+'55154442800',
+'67159011403',
+'55154442700',
+'43353088083',
+'67159011203',
+'55154442804',
+'55154442704',
+'68151500401',
+'61958100101',
+'61958100102',
+'61958100303',
+'67159091203',
+'61958100301',
+'61958100201',
+'61958100401',
+'61958100302')
+
+ AND   encrypted_key_1 IS NOT NULL 
+AND    Upper(encrypted_key_1) <> 'NULL' 
+AND    Upper(encrypted_key_1) NOT LIKE 'XXX -%' 
+AND Year(Service_Date) in ('2014','2015','2016')
+
+//////////TOTAL RECORDS FROM THE ABOVE TABLE////////////////////
+Select * from project_analytics.presales.AC_NDC_Raven_Mitral_Ranexa   //////////////////25,338
+
+
+----------------JOINING RAVEN TABLE WITH PROVIDER TABLE TO GET NPI AND PROVIDER TYPE------------------
+drop table if exists project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Ranexa;
+create table project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Ranexa as
+Select a.*, 
+       b.PROVIDER_NPI,
+       b.PROVIDER_TYPE
+
+from project_analytics.presales.AC_NDC_Raven_Mitral_Ranexa a
+left join rwd_db.sandbox.claims_submits_provider b on a.claim_number=b.claim_number
+
+/////TOTAL RECORDS FROM THE ABOVE TABLE///////////////////
+select * from project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Ranexa   ////////////64,239
+
+//////////////////////////////////ADDING CASE TO FIND PROVIDER NPIs//////////////////
+drop table if exists project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Mapping_Ranexa;
+create table project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Mapping_Ranexa as
+
+select a.*,
+
+case when b.provider_NPI is null then
+case when c.Provider_NPI is null then 
+d.Provider_NPI else c.Provider_NPI end
+else b.provider_NPI end as Physician_NPI
+
+
+from  project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Ranexa as a 
+left join (select claim_number,Provider_NPI from project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Ranexa where lower(provider_type) = 'attending') as b
+on a.claim_number = b.claim_number
+left join (select claim_number,Provider_NPI from project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Ranexa where lower(provider_type) = 'rendering') as c
+on a.claim_number = c.claim_number
+left join (select claim_number,Provider_NPI from project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Ranexa where lower(provider_type) = 'operating') as d
+on a.claim_number = d.claim_number
+
+////////////TOTAL RECORDS FROM THE ABOVE TABLE////////////////////
+Select * from project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Mapping_Ranexa   //////////////215,121
+
+/////////////////UNION oF RAVEN AND PHARMACY TABLE////////////////////
+drop table if exists project_analytics.presales.AC_NDC_Ranexa_Raven_Pharmacy_Final;
+create table project_analytics.presales.AC_NDC_Ranexa_Raven_Pharmacy_Final as
+Select Data_SOurce, claim_number, patient_suffix, service_date, Physician_NPI from project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Mapping_Ranexa
+UNION
+Select Data_SOurce, claim_number, patient_suffix, SERVICE_FROM, Provider_NPI from project_analytics.presales.AC_Claims_RXA_Mitral_NDC_Ranexa
+
+
+////////////////////////TOTAL RECORDS FROM THE ABOVE FILE//////////////
+Select * from project_analytics.presales.AC_NDC_Ranexa_Raven_Pharmacy_Final   ////////600,029
+
+
+
+
+
+
+//////////////////////////////JOINING WITH CMS TABLE TO GET DIFFERENT COLUMNS//////////////////////////////
+drop table if exists project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_Ranexa;
+create  table project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_Ranexa as
+select a.*,
+b.ENTITY_TYPE_CODE,
+b.PROVIDER_NAME_PREFIX_TEXT,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_1 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_1,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_1,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_2 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_2,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_2,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_3 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_3,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_3,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_4 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_4,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_4,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_5 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_5,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_5,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_6 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_6,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_6,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_7 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_7,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_7,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_8 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_8,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_8,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_9 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_9,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_9,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_10 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_10,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_10,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_11 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_11,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_11,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_12 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_12,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_12,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_13 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_13,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_13,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_14 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_14,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_14,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_15 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_15,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_15,
+b.PROVIDER_CREDENTIAL_TEXT
+from project_analytics.presales.AC_NDC_Ranexa_Raven_Pharmacy_Final a
+left join RWD_DB.RWD.THIRD_PARTY_CMSNPI  b on a.Physician_NPI = cast(b.npi as varchar())
+
+/////////TOTAL RECORDS FROM THE ABOVE TABLE/////////////
+Select * from project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_Ranexa  ///////660,029
+
+
+////////ADDING TAXONOMY COLUMN ON THE BASIS OF THE SWITCH COLUMN///////
+drop table if exists project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_Ranexa_1;
+create table project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_Ranexa_1 as
+Select *,
+
+Case when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_1) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_1
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_2) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_2
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_3) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_3
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_4) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_4
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_5) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_5
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_6) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_6
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_7) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_7
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_8) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_8
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_9) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_9
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_10) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_10
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_11) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_11
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_12) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_12
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_13) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_13
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_14) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_14
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_15) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_15 
+    when HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_1 is not null then  HEALTHCARE_PROVIDER_TAXONOMY_code_1 end as Final_taxonomy 
+    
+ from project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_Ranexa   
+
+/////////////QC//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+Select distinct Physician_NPI from project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_Ranexa_1
+where Final_taxonomy is null and length(Physician_NPI) = 10
+
+Select distinct Physician_NPI from project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_Ranexa_1
+where length(Physician_NPI) = 10
+
+Select * from project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_Ranexa_1
+where length(Physician_NPI) < 10 and data_source = 'Raven'
+
+Select * from project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_Ranexa_1
+where length(Physician_NPI) = 10 and upper(data_source) = 'PHARMACY'
+
+Select * from RWD_DB.RWD.THIRD_PARTY_CMSNPI  where npi =
+'1841328416'
+
+Select * from project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final_Ranexa  
+where Physician_npi = '1841328416'
+Select * from project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final_Ranexa  
+where Physician_npi = '1649360124'
+Select * from RWD_DB.RWD.THIRD_PARTY_CMSNPI  where npi =
+'1649360124'
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+/////////////JOINING WITH CMS SPECIALTY TABLE TO GET THE SPECIALTY//////
+drop table if exists project_analytics.presales.AC_Speciality_Mitral_Speciality_code_Mapping_Ranexa;
+create table project_analytics.presales.AC_Speciality_Mitral_Speciality_code_Mapping_Ranexa as
+select a.*,
+b.CLASSIFICATION,
+b.GROUPING_X,
+b.SPECIALTY
+from project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_Ranexa_1 a 
+left join RWD_DB.RWD.CMS_Provider_Specialty_Codes b on a.Final_taxonomy = b.code
+where
+a.ENTITY_TYPE_CODE='1'
+
+///////////////TOTAL RECORDS FROM THE ABOVE TABLE//////////////////
+
+Select * from project_analytics.presales.AC_Speciality_Mitral_Speciality_code_Mapping_Ranexa    /////642,913
+
+
+//////////TABLE FOR PHYSICIAN DETAILS///////
+drop table if exists project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final_Ranexa;
+Create table project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final_Ranexa as
+Select  a.Data_Source, a.Claim_Number,a.Physician_NPI, a.patient_suffix, b.PROVIDER_FIRST_NAME as First_Name, b.PROVIDER_LAST_NAME_LEGAL_NAME as Last_Name,
+b.PROVIDER_FIRST_LINE_BUSINESS_MAILING_ADDRESS as Mailing_Address, b.PROVIDER_BUSINESS_MAILING_ADDRESS_CITY_NAME as City_Name, b.PROVIDER_BUSINESS_MAILING_ADDRESS_STATE_NAME as State_Name,
+b.PROVIDER_BUSINESS_MAILING_ADDRESS_POSTAL_CODE as ZIP, 
+a.SPECIALTY, a.Service_Date, a.Final_taxonomy
+from project_analytics.presales.AC_Speciality_Mitral_Speciality_code_Mapping_Ranexa a 
+left join RWD_DB.RWD.THIRD_PARTY_CMSNPI b on a.Physician_NPI=cast(b.NPI as varchar())  
+
+///////COUNTS//////////////////////
+
+Select Year(Service_Date) as Year,Physician_NPI, First_Name, Last_Name,Mailing_Address,City_Name,State_Name,ZIP, SPECIALTY,Data_Source, count(distinct(claim_number)) from project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final_Ranexa
+
+group by Year,2,3,4,5,6,7,8,9,10
+order by Year,2,3,4,5,6,7,8,9
+
+
+/////UPDATING TABLE//////////////////////
+UPDATE project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final_Ranexa
+Set SPECIALTY='RETINA SPECIALIST'
+where Upper(Final_taxonomy)='207WX0107X'
+
+
+Select Year(Service_Date) as Year,Physician_NPI, First_Name, Last_Name,Mailing_Address,City_Name,State_Name,ZIP, SPECIALTY,Data_Source, count(distinct(claim_number)) from project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final_Ranexa
+
+group by Year,2,3,4,5,6,7,8,9,10
+order by Year,2,3,4,5,6,7,8,9
+
+/////QC////
+Select distinct Final_taxonomy from project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final_Ranexa
+where Upper(SPECIALTY) is NULL
+
+//////QC////////////////////////
+Select distinct Physician_NPI, count(distinct claim_number )over (partition by Physician_NPI) from project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final_Ranexa
+where Upper(SPECIALTY) is NULL
+order by 2 desc
+select * from project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final_Ranexa where First_Name is null
+select * from project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_Ranexa_1
+where Physician_NPI='1033111315'
+///////QC///////////////
+

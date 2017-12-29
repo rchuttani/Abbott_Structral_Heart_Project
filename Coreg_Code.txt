@@ -1,0 +1,276 @@
+
+///////////PHARMACY CODE TO FETCH DETAILS FOR Coreg (Carvedilol) ////////////////
+drop table if exists project_analytics.presales.AC_Claims_RXA_Mitral_NDC;
+CREATE TABLE project_analytics.presales.AC_Claims_RXA_Mitral_NDC AS
+SELECT
+    'Pharmacy' as Data_Source,
+    encrypted_key_1 AS patient_suffix,
+    CONDOR_TDR_CLAIMID AS Claim_Number
+    , to_date(date_of_service) as SERVICE_FROM
+    ,PRODUCT_OR_SERVICE_ID,
+	 prescriber_id as Provider_NPI,
+	 SERVICE_PROVIDER_ID as facility_npi 
+    
+    FROM rwd_db.rwd.condor_pharmacy_record
+
+WHERE TRIM(UPPER(RESPONSE_CODE)) = 'P'
+  AND trim(upper(PRODUCT_OR_SERVICE_ID)) in (Select Upper(NDC_Code) from project_analytics.presales.AC_Corex_Table where upper(NDC_Code) not in ('NDC_CODE'))
+  and
+  patient_suffix is not null
+        and trim(patient_suffix) <> ''
+        and upper(patient_suffix) not like 'XXX -%'
+        and upper(patient_suffix) <> 'NULL'
+AND Year(SERVICE_FROM) in ('2014','2015','2016')
+
+//////TOTAL RECORDS FROM PHARMACY///////////////////
+Select * from project_analytics.presales.AC_Claims_RXA_Mitral_NDC   /////8,345,821
+
+////////////////////RAVEN CODE TO FETCH FOR Coreg (Carvedilol) ///////////////////
+
+drop table if exists project_analytics.presales.AC_NDC_Raven_Mitral ;
+CREATE TABLE project_analytics.presales.AC_NDC_Raven_Mitral as 
+SELECT   
+        'Raven' as Data_Source,
+        encrypted_key_1 as patient_suffix,
+        claim_number,
+        Coalesce(SERVICE_FROM,STATEMENT_FROM) as Service_Date,
+        NDC
+          
+FROM    rwd_db.sandbox.claims_submits_procedure
+where
+UPPER(NDC) in ( Select Upper(NDC_Code) from project_analytics.presales.AC_Corex_Table where upper(NDC_Code) not in ('NDC_CODE'))   ////NDC ATTACHED IN A NEW TABLE
+
+ AND   encrypted_key_1 IS NOT NULL 
+AND    Upper(encrypted_key_1) <> 'NULL' 
+AND    Upper(encrypted_key_1) NOT LIKE 'XXX -%' 
+AND Year(Service_Date) in ('2014','2015','2016')
+
+//////////TOTAL RECORDS FROM RAVEN CODE////////////////////
+Select * from project_analytics.presales.AC_NDC_Raven_Mitral  //////332,297
+
+
+----------------Joining with provider table to get NPI AND PROVIDER TYPE COLUMN------------------
+drop table if exists project_analytics.presales.AC_NDC_Raven_Mitral_Prov;
+create table project_analytics.presales.AC_NDC_Raven_Mitral_Prov as
+Select a.*, 
+       b.PROVIDER_NPI,
+       b.PROVIDER_TYPE
+
+from project_analytics.presales.AC_NDC_Raven_Mitral a
+left join rwd_db.sandbox.claims_submits_provider b on a.claim_number=b.claim_number
+
+
+////TOTAL NUMBER OF RECORDS FROM THE TABLE AFTER JOINING WITH PROVIDER TABLE/////////////
+Select * from project_analytics.presales.AC_NDC_Raven_Mitral_Prov  /////////873,959
+//////////////////////////////////Adding case to add Proviers NPI//////////////////
+drop table if exists project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Mapping;
+create table project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Mapping as
+
+select a.*,
+
+case when b.provider_NPI is null then
+case when c.Provider_NPI is null then 
+d.Provider_NPI else c.Provider_NPI end
+else b.provider_NPI end as Physician_NPI
+
+
+from  project_analytics.presales.AC_NDC_Raven_Mitral_Prov as a 
+left join (select claim_number,Provider_NPI from project_analytics.presales.AC_NDC_Raven_Mitral_Prov where lower(provider_type) = 'attending') as b
+on a.claim_number = b.claim_number
+left join (select claim_number,Provider_NPI from project_analytics.presales.AC_NDC_Raven_Mitral_Prov where lower(provider_type) = 'rendering') as c
+on a.claim_number = c.claim_number
+left join (select claim_number,Provider_NPI from project_analytics.presales.AC_NDC_Raven_Mitral_Prov where lower(provider_type) = 'operating') as d
+on a.claim_number = d.claim_number
+
+/////////////////UNION OF RAVEN AND PHARMACY TABLE////////////////////
+drop table if exists project_analytics.presales.AC_NDC_Coreg_Raven_Pharmacy_Final;
+create table project_analytics.presales.AC_NDC_Coreg_Raven_Pharmacy_Final as
+Select Data_Source,claim_number, patient_suffix, service_date, Physician_NPI from project_analytics.presales.AC_NDC_Raven_Mitral_Prov_Mapping
+UNION
+Select Data_Source,claim_number, patient_suffix, SERVICE_FROM, Provider_NPI from project_analytics.presales.AC_Claims_RXA_Mitral_NDC
+
+///////////TOTAL RECORDS FROM THE UNION TABLE///////////////
+Select * from project_analytics.presales.AC_NDC_Coreg_Raven_Pharmacy_Final   ///////////8,666,960
+
+//////QC////////
+Select count(distinct(patient_suffix)), Year(service_date) as Year from project_analytics.presales.AC_NDC_Coreg_Raven_Pharmacy_Final
+group by year
+order by year
+
+
+
+*********************************************************************************************************
+
+
+//////////////////////////////JOINING WITH CMS TABLE TO FETCH DIFFERENT COLUMNS FOR GETTING THE SPECIALTIES LATER//////////////////////////////
+drop table if exists project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping;
+create  table project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping as
+select a.*,
+b.ENTITY_TYPE_CODE,
+b.PROVIDER_NAME_PREFIX_TEXT,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_1 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_1,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_1,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_2 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_2,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_2,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_3 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_3,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_3,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_4 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_4,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_4,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_5 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_5,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_5,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_6 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_6,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_6,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_7 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_7,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_7,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_8 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_8,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_8,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_9 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_9,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_9,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_10 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_10,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_10,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_11 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_11,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_11,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_12 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_12,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_12,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_13 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_13,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_13,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_14 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_14,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_14,
+
+cast(b.HEALTHCARE_PROVIDER_TAXONOMY_code_15 as varchar()) as HEALTHCARE_PROVIDER_TAXONOMY_code_15,
+b.HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_15,
+b.PROVIDER_CREDENTIAL_TEXT
+from project_analytics.presales.AC_NDC_Coreg_Raven_Pharmacy_Final a
+left join RWD_DB.RWD.THIRD_PARTY_CMSNPI  b on a.Physician_NPI = cast(b.npi as varchar())
+
+/////////////////TOTAL RECORDS FROM THE ABOVE TABLE/////////////////////
+Select * from project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping   ////8,665,960
+
+
+////////ADDING TAXONOMY COLUMNS ON THE BASIS OF SWITCH COLUMN /////
+drop table if exists project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_1;
+create table project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_1 as
+Select *,
+
+Case when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_1) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_1
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_2) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_2
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_3) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_3
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_4) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_4
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_5) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_5
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_6) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_6
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_7) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_7
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_8) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_8
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_9) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_9
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_10) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_10
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_11) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_11
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_12) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_12
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_13) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_13
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_14) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_14
+    when Upper(HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_15) = 'Y' then HEALTHCARE_PROVIDER_TAXONOMY_code_15 
+    when HEALTHCARE_PROVIDER_PRIMARY_TAXONOMY_SWITCH_1 is not null then  HEALTHCARE_PROVIDER_TAXONOMY_code_1 end as Final_taxonomy 
+    
+ from project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping   
+
+  
+
+/////////////JOINING WITH CMS SPECIALTY TABLE TO GET THE SPECIALTY COLUMN//////
+drop table if exists project_analytics.presales.AC_Speciality_Mitral_Speciality_code_Mapping;
+create table project_analytics.presales.AC_Speciality_Mitral_Speciality_code_Mapping as
+select a.*,
+b.CLASSIFICATION,
+b.GROUPING_X,
+b.SPECIALIZATION,
+b.SPECIALTY
+from project_analytics.presales.AC_NDC_Raven_Mitral_Spec_Mapping_1 a 
+left join RWD_DB.RWD.CMS_Provider_Specialty_Codes b on a.Final_taxonomy = b.code
+where
+a.ENTITY_TYPE_CODE='1'
+
+ 
+
+///////////TABLE FOR PHYSICIAN DETAILS/////////
+
+drop table if exists project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final;
+Create table project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final as
+Select  a.Data_Source,a.Claim_Number,a.Physician_NPI, a.patient_suffix, b.PROVIDER_FIRST_NAME as First_Name, b.PROVIDER_LAST_NAME_LEGAL_NAME as Last_Name,
+b.PROVIDER_FIRST_LINE_BUSINESS_MAILING_ADDRESS as Mailing_Address, b.PROVIDER_BUSINESS_MAILING_ADDRESS_CITY_NAME as City_Name, b.PROVIDER_BUSINESS_MAILING_ADDRESS_STATE_NAME as State_Name,
+b.PROVIDER_BUSINESS_MAILING_ADDRESS_POSTAL_CODE as ZIP,
+a.SPECIALTY, a.Service_Date, a.Final_taxonomy
+from project_analytics.presales.AC_Speciality_Mitral_Speciality_code_Mapping a 
+left join RWD_DB.RWD.THIRD_PARTY_CMSNPI b on a.Physician_NPI=cast(b.NPI as varchar())
+
+/////QC///////////////////////////////////////////////////////////////////////////////////////////
+Select * from project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final
+where Upper(SPECIALTY) is NULL
+
+update project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final
+set SPECIALTY='Retina Specialist'
+where Upper(Final_taxonomy)='207WX0107X'
+
+update project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final
+set SPECIALTY='Uveitis and Ocular Inflammatory Disease'
+where Upper(Final_taxonomy)='207WX0108X'
+
+update project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final
+set SPECIALTY='Glaucoma Specialist'
+where Upper(Final_taxonomy)='207WX0009X'
+
+update project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final
+set SPECIALTY='Neurocritical Care'
+where Upper(Final_taxonomy)='2084A2900X'
+
+limit 500
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+//////TO GET THE PHYSICIAN LEVEL DETAILS////
+Select Year(Service_Date) as Year,  Physician_NPI, First_Name, Last_Name,Mailing_Address,City_Name,State_Name,ZIP, SPECIALTY,Data_Source, count(distinct(claim_number)) from project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final
+
+group by Year,2,3,4,5,6,7,8,9,10
+order by Year,2,3,4,5,6,7,8,9,10
+
+
+/////////////////////////// QC  //////////////////////////////////////////////////////////////////////////////////////////////////
+Select distinct * from project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final
+Where Physician_NPI = '1053323626'
+
+Select Distinct * from  RWD_DB.RWD.THIRD_PARTY_CMSNPI
+where NPI = '1053323626'
+
+
+Select Distinct * from  RWD_DB.RWD.THIRD_PARTY_CMSNPI
+where NPI = '1629124417'
+
+Select Distinct * from  RWD_DB.RWD.THIRD_PARTY_CMSNPI
+where NPI = '1750464855'
+
+
+Select * from RWD_DB.RWD.CMS_Provider_Specialty_Codes
+where code = '207Q00000X' ----Family Medicine
+
+Select Distinct * from  RWD_DB.RWD.THIRD_PARTY_CMSNPI
+where NPI = '1295814408'
+
+Select * from RWD_DB.RWD.CMS_Provider_Specialty_Codes
+where code = '207Q00000X' ----Family Medicine
+
+Select count(Specialty) over (partition by physician_NPI)  ,Physician_NPI,Specialty from (
+Select distinct Physician_NPI,Specialty from project_analytics.presales.AC_Physician_Mitral_Raven_Details_Final)
+group by Physician_NPI,Specialty 
+order by 1 desc
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
